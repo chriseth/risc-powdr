@@ -3,16 +3,18 @@ use std::{fs, path::Path};
 use crate::asm_parser::{self, Argument, Register, Statement};
 
 pub fn compile_file(file: &Path) {
-    compile_riscv_asm(&fs::read_to_string(file).unwrap());
+    let output = compile_riscv_asm(&fs::read_to_string(file).unwrap());
+    println!("{output}");
 }
 
-pub fn compile_riscv_asm(data: &str) {
+pub fn compile_riscv_asm(data: &str) -> String {
     let data = data.to_string() + &library_routines();
-    print!("{}", preamble());
+    let mut output = preamble();
 
     for s in asm_parser::parse_asm(&data) {
-        print!("{}", process_statement(s));
+        output += &process_statement(s);
     }
+    output
 }
 
 fn preamble() -> String {
@@ -100,8 +102,8 @@ instr jump l: label { pc' = l }
 instr call l: label { pc' = l, x1' = pc + 1, x6' = l }
 instr ret { pc' = x1 }
 
-instr branch_if_nonzero <=X= c, l: label { pc' = (1 - XIsZero) * l + XIsZero * (pc + 1) }}
-instr branch_if_zero <=X= c, l: label { pc' = XIsZero * l + (1 - XIsZero) * (pc + 1) }}
+instr branch_if_nonzero <=X= c, l: label { pc' = (1 - XIsZero) * l + XIsZero * (pc + 1) }
+instr branch_if_zero <=X= c, l: label { pc' = XIsZero * l + (1 - XIsZero) * (pc + 1) }
 
 // input X is required to be the difference of two 32-bit unsigend values.
 // i.e. -2**32 < X < 2**32
@@ -112,11 +114,11 @@ instr branch_if_positive <=X= c, l: label {
 
 // ================= logical instructions =================
 
-instr is_equal_zero <=X= v, t <= Y { Y = XIsZero }
+instr is_equal_zero <=X= v, t <=Y= { Y = XIsZero }
 
 // ================= arith/bitwise instructions =================
 
-instr xor <=X= a, <=Y= b, c <= Z {
+instr xor <=X= a, <=Y= b, c <=Z= {
     {X, Y, Z} in 1 { binary.X, binary.Y, binary.RESULT, 1 }
 }
 // we wanted better synatx: { binary(X, Y, Z) }
@@ -127,7 +129,9 @@ instr xor <=X= a, <=Y= b, c <= Z {
 
 // Wraps a value in Y to 32 bits.
 // Requires 0 <= Y < 2**33
-instr wrap <=Y= v, x <= X { Y = X + wrap_bit * 2**32, X = Xhi * 2**16 + Xlo }
+// TODO we need better syntax for defining instructions that are functions.
+// Maybe like instr wrap <=Y= v -> X { Y = X + wrap_bit * 2**32, X = Xhi * 2**16 + Xlo }
+instr wrap <=Y= v, x <=X= { Y = X + wrap_bit * 2**32, X = Xhi * 2**16 + Xlo }
 pil{
     Xlo in bytes2;
     Xhi in bytes2;
@@ -137,7 +141,7 @@ pil{
 
 // ======================= assertions =========================
 
-instr fail { 1 = 0; }
+instr fail { 1 = 0 }
 
 // Removes up to 16 bits beyond 32
 // TODO is this really safe?
@@ -149,7 +153,7 @@ pil{
 
 // set the stack pointer.
 // TODO other things to initialize?
-x2 <=X= 0x10000
+x2 <=X= 0x10000;
     "#
 }
 
@@ -250,95 +254,95 @@ fn process_instruction(instr: &str, args: &[Argument]) -> String {
     match instr {
         "add" => {
             let (rd, r1, r2) = rrr(args);
-            format!("{rd} <=X= wrap {r1} + {r2}\n")
+            format!("{rd} <=X= wrap({r1} + {r2});\n")
         }
         "addi" => {
             let (rd, rs, imm) = rri(args);
-            format!("{rd} <=X= wrap {rs} + {imm}\n")
+            format!("{rd} <=X= wrap({rs} + {imm});\n")
         }
         "beq" => {
             let (r1, r2, label) = rrl(args);
-            format!("branch_if_zero {r1} - {r2}, {label}\n")
+            format!("branch_if_zero {r1} - {r2}, {label};\n")
         }
         "beqz" => {
             let (r1, label) = rl(args);
-            format!("branch_if_zero {r1}, {label}\n")
+            format!("branch_if_zero {r1}, {label};\n")
         }
         "bgeu" => {
             let (r1, r2, label) = rrl(args);
-            format!("branch_if_positive {r1} - {r2}, {label}\n")
+            format!("branch_if_positive {r1} - {r2}, {label};\n")
         }
         "bltu" => {
             let (r1, r2, label) = rrl(args);
-            format!("branch_if_positive {r2} - {r1}, {label}\n")
+            format!("branch_if_positive {r2} - {r1}, {label};\n")
         }
         "bne" => {
             let (r1, r2, label) = rrl(args);
-            format!("branch_if_nonzero {r1} - {r2}, {label}\n")
+            format!("branch_if_nonzero {r1} - {r2}, {label};\n")
         }
         "bnez" => {
             let (r1, label) = rl(args);
-            format!("branch_if_nonzero {r1}, {label}\n")
+            format!("branch_if_nonzero {r1}, {label};\n")
         }
         "j" => {
             if let [Argument::Symbol(label)] = args {
-                format!("jump {label}\n")
+                format!("jump {label};\n")
             } else {
                 panic!()
             }
         }
         "call" => {
             if let [Argument::Symbol(label)] = args {
-                format!("call {label}\n")
+                format!("call {label};\n")
             } else {
                 panic!()
             }
         }
         "ecall" => {
             assert!(args.is_empty());
-            "x10 <= ${ }\n".to_string()
+            "x10 <= ${ };\n".to_string()
         }
         "li" => {
             let (rd, imm) = ri(args);
-            format!("{rd} <=X= {imm}\n")
+            format!("{rd} <=X= {imm};\n")
         }
         "lui" => {
             let (rd, imm) = ri(args);
-            format!("{rd} <=X= {}\n", imm << 12)
+            format!("{rd} <=X= {};\n", imm << 12)
         }
         "lw" => {
             let (rd, rs, off) = rro(args);
-            format!("addr <=X= wrap {rs} + {off}\n") + &format!("{rd} <=X= mload\n")
+            format!("addr <=X= wrap({rs} + {off});\n") + &format!("{rd} <=X= mload;\n")
         }
         "sw" => {
             let (r1, r2, off) = rro(args);
-            format!("addr <=X= wrap {r2} + {off}\n") + &format!("mstore {r1}\n")
+            format!("addr <=X= wrap({r2} + {off});\n") + &format!("mstore {r1};\n")
         }
         "mv" => {
             let (rd, rs) = rr(args);
-            format!("{rd} <=X= {rs}\n")
+            format!("{rd} <=X= {rs};\n")
         }
         "ret" => {
             assert!(args.is_empty());
-            "ret\n".to_string()
+            "ret;\n".to_string()
         }
         "seqz" => {
             let (rd, rs) = rr(args);
-            format!("{rd} <=Y= is_equal_zero {rs}\n")
+            format!("{rd} <=Y= is_equal_zero {rs};\n")
         }
         "slli" => {
             let (rd, rs, amount) = rri(args);
             assert!(amount <= 31);
             if amount <= 16 {
-                format!("{rd} <=Y= wrap16 {rs} * {}\n", 1 << amount)
+                format!("{rd} <=Y= wrap16({rs} * {});\n", 1 << amount)
             } else {
                 todo!();
             }
         }
-        "unimp" => "fail\n".to_string(),
+        "unimp" => "fail;\n".to_string(),
         "xor" => {
             let (rd, r1, r2) = rrr(args);
-            format!("{rd} <=X= xor {r1}, {r2}\n")
+            format!("{rd} <=X= xor {r1}, {r2};\n")
         }
         _ => todo!("Unknown instruction: {instr}"),
     }

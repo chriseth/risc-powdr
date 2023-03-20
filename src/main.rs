@@ -15,12 +15,22 @@ enum Commands {
         /// Input file
         input: String,
     },
+    /// Converts a "no_std" Rust file to powdr assembly.
+    CompileRs {
+        /// Input file
+        input: String,
+    },
 }
 
 fn main() {
     match Cli::parse().command {
         Commands::Compile { input } => {
             risc_powdr::compiler::compile_file(Path::new(&input));
+        }
+        Commands::CompileRs { input } => {
+            let powdr_asm = risc_powdr::compile_rust_to_asm(&input);
+            let output = risc_powdr::compiler::compile_riscv_asm(&powdr_asm);
+            println!("{output}");
         }
     }
 }
